@@ -7,25 +7,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var floatingPanel: NSPanel!
     private var clipboardManager = ClipboardManager.shared
+    
+    // 全局事件监控
     private var eventMonitor: Any?
+    private var clickMonitor: Any?
+    
+    // CGEventTap for hotkey
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    
+    // 定时器用于检查/重连 event tap
+    private var hotkeyTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPanel()
         setupGlobalHotKey()
+        startHotkeyHealthCheck()
     }
 
+    // MARK: - Hotkey Setup
+    
     private func setupGlobalHotKey() {
-        // 方法1: 本地监控（不需要辅助功能权限，但只在app focus时生效）
+        setupCGEventTap()
+        
+        // 本地监控作为备用
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event)
             return event
         }
-
-        // 方法2: CGEventTap（需要更高级权限）
-        setupCGEventTap()
     }
 
     private func setupCGEventTap() {
@@ -35,6 +45,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let refcon = refcon else { return Unmanaged.passRetained(event) }
             let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
 
+            // 处理 keyDown 事件
             if type == .keyDown {
                 let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
                 let flags = event.flags
@@ -43,9 +54,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.async {
                         appDelegate.togglePanel()
                     }
+                    // 消费掉这个事件，不传递给其他应用
+                    return nil
                 }
             }
-
+            
+            // 其他事件正常传递
             return Unmanaged.passRetained(event)
         }
 
@@ -62,10 +76,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
+            print("✅ CGEventTap 创建成功")
         } else {
-            print("⚠️ CGEventTap 创建失败，尝试使用权限查询...")
+            print("⚠️ CGEventTap 创建失败")
             queryAccessibilityPermissions()
         }
+    }
+    
+    // 健康检查：定期确保 event tap 处于启用状态
+    private func startHotkeyHealthCheck() {
+        hotkeyTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.checkAndRestoreEventTap()
+        }
+    }
+    
+    private func checkAndRestoreEventTap() {
+        guard let tap = eventTap else { return }
+        
+        // 检查 tap 是否启用
+        let isEnabled = CGEvent.tapIsEnabled(tap: tap)
+        
+        if !isEnabled {
+            print("⚠️ EventTap 被禁用，尝试重新启用...")
+            CGEvent.tapEnable(tap: tap, enable: true)
+            
+            // 如果重新启用失败，尝试重新创建
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                print("⚠️ 重新启用失败，尝试重建 EventTap...")
+                cleanupEventTap()
+                setupCGEventTap()
+            }
+        }
+    }
+    
+    private func cleanupEventTap() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+        }
+        eventTap = nil
+        runLoopSource = nil
     }
 
     private func queryAccessibilityPermissions() {
@@ -80,13 +132,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleKeyEvent(_ event: NSEvent) {
         let controlPressed = event.modifierFlags.contains(.control)
-
         if controlPressed && event.keyCode == kVK_ANSI_V {
             DispatchQueue.main.async {
                 self.togglePanel()
             }
         }
     }
+
+    // MARK: - Panel Show/Hide
 
     @objc private func togglePanel() {
         if floatingPanel.isVisible {
@@ -109,9 +162,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             context.duration = 0.2
             floatingPanel.animator().alphaValue = 1
         }
+        
+        // 显示时开启点击监控
+        startClickOutsideMonitor()
     }
 
     private func hidePanel() {
+        // 隐藏前先停止点击监控
+        stopClickOutsideMonitor()
+        
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             floatingPanel.animator().alphaValue = 0
@@ -119,12 +178,73 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.floatingPanel.orderOut(nil)
         }
     }
+    
+    // MARK: - Click Outside Detection
+    
+    private func startClickOutsideMonitor() {
+        // 使用 NSEvent global monitor 检测鼠标点击
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self, self.floatingPanel.isVisible else { return }
+            
+            // 获取点击位置（屏幕坐标）
+            let clickLocation = event.locationInWindow
+            
+            // 将点击位置转换到屏幕坐标
+            guard let window = event.window else {
+                // 如果 event.window 为 nil，说明点击不在任何窗口内
+                // 这种情况可能是点击在桌面上或其他应用上
+                // 检查是否点击在面板外
+                if self.isClickOutsidePanel(event) {
+                    self.hidePanel()
+                }
+                return
+            }
+            
+            // 获取点击的窗口在屏幕上的 frame
+            if let windowFrame = window.convertToScreen(NSRect(origin: clickLocation, size: NSSize(width: 1, height: 1))) as NSRect? {
+                // 检查点击位置是否在面板范围内
+                let panelFrame = self.floatingPanel.frame
+                
+                // 如果点击不在面板内，则关闭面板
+                if !NSPointInRect(windowFrame.origin, panelFrame) {
+                    // 进一步验证：确保不是点击在面板本身
+                    let panelScreenFrame = self.floatingPanel.convertToScreen(NSRect(origin: .zero, size: panelFrame.size))
+                    if !NSPointInRect(windowFrame.origin, panelScreenFrame) {
+                        self.hidePanel()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func stopClickOutsideMonitor() {
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+        }
+    }
+    
+    private func isClickOutsidePanel(_ event: NSEvent) -> Bool {
+        guard let screen = NSScreen.main else { return false }
+        
+        // 获取鼠标在屏幕上的位置
+        let mouseLocation = NSEvent.mouseLocation
+        
+        // 检查鼠标位置是否在面板范围内
+        let panelFrame = floatingPanel.frame
+        
+        // 如果鼠标不在面板内，则认为是点击外面
+        return !NSPointInRect(mouseLocation, panelFrame)
+    }
 
     @objc private func clearHistory() {
         clipboardManager.clearHistory()
     }
 
     @objc private func quit() {
+        stopClickOutsideMonitor()
+        hotkeyTimer?.invalidate()
+        cleanupEventTap()
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -132,13 +252,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     deinit {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
-        }
+        hotkeyTimer?.invalidate()
+        cleanupEventTap()
+        stopClickOutsideMonitor()
     }
+
+    // MARK: - Status Item Setup
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -159,6 +278,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         return menu
     }
+
+    // MARK: - Panel Setup
 
     private func setupPanel() {
         let contentView = ClipboardContentView(onSelect: { [weak self] item in
@@ -185,6 +306,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanel.isFloatingPanel = true
         floatingPanel.becomesKeyOnlyIfNeeded = true
         floatingPanel.hidesOnDeactivate = false
+        // 允许点击事件穿透（用于检测外部点击）
+        floatingPanel.acceptsMouseMovedEvents = true
+        floatingPanel.ignoresMouseEvents = false
 
         floatingPanel.alphaValue = 0
     }
@@ -247,10 +371,8 @@ struct ClipboardContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             headerView
 
-            // Content
             if manager.items.isEmpty {
                 emptyStateView
             } else if filteredItems.isEmpty {
@@ -265,7 +387,6 @@ struct ClipboardContentView: View {
 
     private var headerView: some View {
         HStack(spacing: 12) {
-            // Logo + Title
             HStack(spacing: 8) {
                 Image(systemName: "doc.on.clipboard.fill")
                     .font(.system(size: 16))
@@ -275,7 +396,6 @@ struct ClipboardContentView: View {
                     .foregroundColor(ClipBoardColors.text)
             }
 
-            // Search field
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
@@ -305,7 +425,6 @@ struct ClipboardContentView: View {
 
             Spacer()
 
-            // Stats badge
             HStack(spacing: 4) {
                 Text("\(manager.items.count)")
                     .font(.system(size: 12, weight: .semibold))
@@ -319,7 +438,6 @@ struct ClipboardContentView: View {
             .background(ClipBoardColors.primary.opacity(0.1))
             .cornerRadius(12)
 
-            // Close button
             Button(action: { NSApp.keyWindow?.orderOut(nil) }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
@@ -408,16 +526,13 @@ struct ClipboardCard: View {
     var body: some View {
         Button(action: onClick) {
             VStack(alignment: .leading, spacing: 0) {
-                // Preview area
                 previewArea
                     .frame(height: 130)
 
-                // Divider
                 Rectangle()
                     .fill(ClipBoardColors.border)
                     .frame(height: 1)
 
-                // Footer
                 footerArea
                     .frame(height: 50)
             }
@@ -494,12 +609,10 @@ struct ClipboardCard: View {
 
     private var footerArea: some View {
         HStack(spacing: 8) {
-            // Type badge
             typeBadge
 
             Spacer()
 
-            // Copy hint
             HStack(spacing: 4) {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 10))
@@ -590,7 +703,7 @@ class ClipboardManager: ObservableObject {
 
         let pasteboard = NSPasteboard.general
 
-        // 优先检查文件类型（复制文件时macOS会同时放缩略图，要先捕获文件）
+        // 优先检查文件类型
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             DispatchQueue.main.async {
                 self.addFile(fileURLs.first!)
@@ -598,7 +711,7 @@ class ClipboardManager: ObservableObject {
             return
         }
 
-        // 只有在没有文件时才检查图片（避免文件缩略图被误判为图片）
+        // 检查图片
         if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff),
            let image = NSImage(data: imageData),
            image.tiffRepresentation != nil {
@@ -608,7 +721,7 @@ class ClipboardManager: ObservableObject {
             return
         }
 
-        // 最后检查纯文本
+        // 检查纯文本
         if let content = pasteboard.string(forType: .string), !content.isEmpty {
             DispatchQueue.main.async {
                 self.addText(content)
