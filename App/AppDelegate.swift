@@ -17,14 +17,118 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupGlobalHotKey()
     }
 
-    private func checkAccessibilityPermissions() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
+    private func setupGlobalHotKey() {
+        // 方法1: 本地监控（不需要辅助功能权限，但只在app focus时生效）
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKeyEvent(event)
+            return event
+        }
+
+        // 方法2: CGEventTap（需要更高级权限）
+        setupCGEventTap()
+    }
+
+    private func setupCGEventTap() {
+        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
+
+        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+            guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+            let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+
+            if type == .keyDown {
+                let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+                let flags = event.flags
+
+                if flags.contains(.maskControl) && keyCode == kVK_ANSI_V {
+                    DispatchQueue.main.async {
+                        appDelegate.togglePanel()
+                    }
+                }
+            }
+
+            return Unmanaged.passRetained(event)
+        }
+
+        eventTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: eventMask,
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+
+        if let tap = eventTap {
+            runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+        } else {
+            print("⚠️ CGEventTap 创建失败，尝试使用权限查询...")
+            queryAccessibilityPermissions()
+        }
+    }
+
+    private func queryAccessibilityPermissions() {
+        let trusted = AXIsProcessTrusted()
+        print("辅助功能权限状态: \(trusted)")
 
         if !trusted {
-            print("⚠️ 需要辅助功能权限才能使用全局快捷键")
-            print("请在 系统设置 > 隐私与安全性 > 辅助功能 中添加此应用")
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
         }
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) {
+        let controlPressed = event.modifierFlags.contains(.control)
+
+        if controlPressed && event.keyCode == kVK_ANSI_V {
+            DispatchQueue.main.async {
+                self.togglePanel()
+            }
+        }
+    }
+
+    @objc private func togglePanel() {
+        if floatingPanel.isVisible {
+            hidePanel()
+        } else {
+            showPanel()
+        }
+    }
+
+    @objc private func showPanel() {
+        guard let screen = NSScreen.main else { return }
+        let screenFrame = screen.visibleFrame
+
+        floatingPanel.setContentSize(NSSize(width: screenFrame.width, height: 300))
+        floatingPanel.setFrameOrigin(NSPoint(x: screenFrame.origin.x, y: screenFrame.origin.y - 300))
+        floatingPanel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            floatingPanel.animator().alphaValue = 1
+        }
+    }
+
+    private func hidePanel() {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            floatingPanel.animator().alphaValue = 0
+        } completionHandler: {
+            self.floatingPanel.orderOut(nil)
+        }
+    }
+
+    @objc private func clearHistory() {
+        clipboardManager.clearHistory()
+    }
+
+    @objc private func quit() {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        NSApplication.shared.terminate(nil)
     }
 
     deinit {
@@ -84,121 +188,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         floatingPanel.alphaValue = 0
     }
+}
 
-    private func setupGlobalHotKey() {
-        // 方法1: 本地监控（不需要辅助功能权限，但只在app focus时生效）
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event)
-            return event
+// MARK: - Design System Colors
+
+struct ClipBoardColors {
+    static let primary = Color(hex: "2563EB")
+    static let secondary = Color(hex: "3B82F6")
+    static let accent = Color(hex: "F97316")
+    static let background = Color(hex: "F8FAFC")
+    static let text = Color(hex: "1E293B")
+    static let textSecondary = Color(hex: "64748B")
+    static let cardBackground = Color.white
+    static let border = Color(hex: "E2E8F0")
+}
+
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3:
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6:
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8:
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (1, 1, 1, 0)
         }
-
-        // 方法2: CGEventTap（需要更高级权限）
-        setupCGEventTap()
-    }
-
-    private func setupCGEventTap() {
-        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
-
-        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
-            guard let refcon = refcon else { return Unmanaged.passRetained(event) }
-            let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
-
-            if type == .keyDown {
-                let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-                let flags = event.flags
-
-                if flags.contains(.maskControl) && keyCode == kVK_ANSI_V {
-                    DispatchQueue.main.async {
-                        appDelegate.togglePanel()
-                    }
-                }
-            }
-
-            return Unmanaged.passRetained(event)
-        }
-
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: eventMask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
         )
-
-        if let tap = eventTap {
-            runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-        } else {
-            print("⚠️ CGEventTap 创建失败，尝试使用权限查询...")
-            queryAccessibilityPermissions()
-        }
-    }
-
-    private func queryAccessibilityPermissions() {
-        // 检查辅助功能权限状态
-        let trusted = AXIsProcessTrusted()
-        print("辅助功能权限状态: \(trusted)")
-
-        if !trusted {
-            // 提示用户需要授权
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-        }
-    }
-
-    private func handleKeyEvent(_ event: NSEvent) {
-        let controlPressed = event.modifierFlags.contains(.control)
-
-        if controlPressed && event.keyCode == kVK_ANSI_V {
-            DispatchQueue.main.async {
-                self.togglePanel()
-            }
-        }
-    }
-
-    @objc private func togglePanel() {
-        if floatingPanel.isVisible {
-            hidePanel()
-        } else {
-            showPanel()
-        }
-    }
-
-    @objc private func showPanel() {
-        guard let screen = NSScreen.main else { return }
-        let screenFrame = screen.visibleFrame
-
-        floatingPanel.setContentSize(NSSize(width: screenFrame.width, height: 260))
-        floatingPanel.setFrameOrigin(NSPoint(x: screenFrame.origin.x, y: screenFrame.origin.y - 260))
-        floatingPanel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            floatingPanel.animator().alphaValue = 1
-        }
-    }
-
-    private func hidePanel() {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.15
-            floatingPanel.animator().alphaValue = 0
-        } completionHandler: {
-            self.floatingPanel.orderOut(nil)
-        }
-    }
-
-    @objc private func clearHistory() {
-        clipboardManager.clearHistory()
-    }
-
-    @objc private func quit() {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        NSApplication.shared.terminate(nil)
     }
 }
 
@@ -208,112 +235,321 @@ struct ClipboardContentView: View {
     let onSelect: (ClipboardItem) -> Void
 
     @ObservedObject private var manager = ClipboardManager.shared
+    @State private var searchText = ""
+    @State private var hoveredItemId: UUID?
+
+    var filteredItems: [ClipboardItem] {
+        if searchText.isEmpty {
+            return manager.items
+        }
+        return manager.items.filter { $0.content.localizedCaseInsensitiveContains(searchText) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("📋 ClipBoard")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Button(action: { NSApp.keyWindow?.orderOut(nil) }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            // Header
+            headerView
 
+            // Content
             if manager.items.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.largeTitle)
-                        .foregroundColor(.secondary)
-                    Text("No clipboard history")
-                        .foregroundColor(.secondary)
-                    Text("Press ⌃V to open")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
+                emptyStateView
+            } else if filteredItems.isEmpty {
+                noResultsView
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(manager.items, id: \.id) { item in
-                            ClipboardCard(item: item) {
-                                onSelect(item)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                }
+                contentView
             }
         }
-        .frame(height: 260)
-        .background(Color(NSColor.windowBackgroundColor))
+        .frame(height: 300)
+        .background(ClipBoardColors.background)
+    }
+
+    private var headerView: some View {
+        HStack(spacing: 12) {
+            // Logo + Title
+            HStack(spacing: 8) {
+                Image(systemName: "doc.on.clipboard.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(ClipBoardColors.primary)
+                Text("ClipBoard")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(ClipBoardColors.text)
+            }
+
+            // Search field
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundColor(ClipBoardColors.textSecondary)
+
+                TextField("Search...", text: $searchText)
+                    .font(.system(size: 13))
+                    .frame(width: 160)
+
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(ClipBoardColors.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(ClipBoardColors.cardBackground)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(ClipBoardColors.border, lineWidth: 1)
+            )
+
+            Spacer()
+
+            // Stats badge
+            HStack(spacing: 4) {
+                Text("\(manager.items.count)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(ClipBoardColors.primary)
+                Text("items")
+                    .font(.system(size: 12))
+                    .foregroundColor(ClipBoardColors.textSecondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(ClipBoardColors.primary.opacity(0.1))
+            .cornerRadius(12)
+
+            // Close button
+            Button(action: { NSApp.keyWindow?.orderOut(nil) }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(ClipBoardColors.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .background(ClipBoardColors.cardBackground)
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+
+    private var contentView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(filteredItems, id: \.id) { item in
+                    ClipboardCard(
+                        item: item,
+                        isHovered: hoveredItemId == item.id,
+                        onClick: { onSelect(item) },
+                        onHover: { hovered in
+                            hoveredItemId = hovered ? item.id : nil
+                        }
+                    )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 12) {
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(ClipBoardColors.primary.opacity(0.1))
+                    .frame(width: 64, height: 64)
+
+                Image(systemName: "clipboard")
+                    .font(.system(size: 28))
+                    .foregroundColor(ClipBoardColors.primary)
+            }
+
+            VStack(spacing: 4) {
+                Text("No Clipboard History")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(ClipBoardColors.text)
+
+                Text("Copy something to get started")
+                    .font(.system(size: 12))
+                    .foregroundColor(ClipBoardColors.textSecondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var noResultsView: some View {
+        VStack(spacing: 12) {
+            Spacer()
+
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28))
+                .foregroundColor(ClipBoardColors.textSecondary)
+
+            Text("No results for \"\(searchText)\"")
+                .font(.system(size: 13))
+                .foregroundColor(ClipBoardColors.textSecondary)
+
+            Spacer()
+        }
     }
 }
 
 struct ClipboardCard: View {
     let item: ClipboardItem
+    let isHovered: Bool
     let onClick: () -> Void
+    let onHover: (Bool) -> Void
 
     var body: some View {
         Button(action: onClick) {
-            VStack(alignment: .leading, spacing: 8) {
-                if item.type == .image {
-                    if let image = item.loadImage() {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 180, height: 160)
-                    } else {
-                        ZStack {
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.2))
-                            Text("Image")
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(width: 180, height: 160)
-                    }
-                } else if item.type == .file {
-                    ZStack {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.2))
-                        VStack {
-                            Image(systemName: "doc")
-                                .font(.largeTitle)
-                            Text(item.content)
-                                .font(.caption2)
-                                .lineLimit(2)
-                        }
-                    }
-                    .frame(width: 180, height: 160)
-                } else {
-                    Text(item.content)
-                        .font(.system(size: 13))
-                        .foregroundColor(.primary)
-                        .lineLimit(8)
-                        .frame(width: 180, height: 160, alignment: .topLeading)
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                // Preview area
+                previewArea
+                    .frame(height: 130)
 
-                Spacer()
+                // Divider
+                Rectangle()
+                    .fill(ClipBoardColors.border)
+                    .frame(height: 1)
 
-                Text(item.type == .image ? "Image" : item.content)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                // Footer
+                footerArea
+                    .frame(height: 50)
             }
-            .padding(12)
-            .frame(width: 204, height: 220)
-            .background(Color.white)
-            .cornerRadius(8)
-            .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 1)
+            .frame(width: 200, height: 180)
+            .background(ClipBoardColors.cardBackground)
+            .cornerRadius(12)
+            .shadow(color: .black.opacity(isHovered ? 0.12 : 0.06), radius: isHovered ? 8 : 4, x: 0, y: isHovered ? 4 : 2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isHovered ? ClipBoardColors.primary.opacity(0.3) : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            onHover(hovering)
+        }
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+    }
+
+    @ViewBuilder
+    private var previewArea: some View {
+        switch item.type {
+        case .text:
+            Text(item.content)
+                .font(.system(size: 12))
+                .foregroundColor(ClipBoardColors.text)
+                .lineLimit(6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(12)
+
+        case .image:
+            ZStack {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.05))
+
+                if let image = item.loadImage() {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(8)
+                } else {
+                    VStack(spacing: 6) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24))
+                            .foregroundColor(ClipBoardColors.textSecondary)
+                        Text("Image")
+                            .font(.system(size: 11))
+                            .foregroundColor(ClipBoardColors.textSecondary)
+                    }
+                }
+            }
+
+        case .file:
+            ZStack {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.05))
+
+                VStack(spacing: 8) {
+                    Image(systemName: "doc.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(ClipBoardColors.secondary)
+
+                    Text(item.content)
+                        .font(.system(size: 11))
+                        .foregroundColor(ClipBoardColors.text)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                }
+            }
+        }
+    }
+
+    private var footerArea: some View {
+        HStack(spacing: 8) {
+            // Type badge
+            typeBadge
+
+            Spacer()
+
+            // Copy hint
+            HStack(spacing: 4) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10))
+                Text("Copy")
+                    .font(.system(size: 11))
+            }
+            .foregroundColor(ClipBoardColors.textSecondary)
+            .opacity(isHovered ? 1 : 0)
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var typeBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: typeIcon)
+                .font(.system(size: 10))
+            Text(typeLabel)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(typeColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(typeColor.opacity(0.1))
+        .cornerRadius(6)
+    }
+
+    private var typeIcon: String {
+        switch item.type {
+        case .text: return "text.alignleft"
+        case .image: return "photo"
+        case .file: return "doc"
+        }
+    }
+
+    private var typeLabel: String {
+        switch item.type {
+        case .text: return "Text"
+        case .image: return "Image"
+        case .file: return "File"
+        }
+    }
+
+    private var typeColor: Color {
+        switch item.type {
+        case .text: return ClipBoardColors.primary
+        case .image: return Color.purple
+        case .file: return ClipBoardColors.secondary
+        }
     }
 }
 
