@@ -590,21 +590,25 @@ class ClipboardManager: ObservableObject {
 
         let pasteboard = NSPasteboard.general
 
-        if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff),
-           let image = NSImage(data: imageData) {
-            DispatchQueue.main.async {
-                self.addImage(image)
-            }
-            return
-        }
-
-        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !fileURLs.isEmpty {
+        // 优先检查文件类型（复制文件时macOS会同时放缩略图，要先捕获文件）
+        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             DispatchQueue.main.async {
                 self.addFile(fileURLs.first!)
             }
             return
         }
 
+        // 只有在没有文件时才检查图片（避免文件缩略图被误判为图片）
+        if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff),
+           let image = NSImage(data: imageData),
+           image.tiffRepresentation != nil {
+            DispatchQueue.main.async {
+                self.addImage(image)
+            }
+            return
+        }
+
+        // 最后检查纯文本
         if let content = pasteboard.string(forType: .string), !content.isEmpty {
             DispatchQueue.main.async {
                 self.addText(content)
