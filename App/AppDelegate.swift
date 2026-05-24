@@ -8,134 +8,82 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var floatingPanel: NSPanel!
     private var clipboardManager = ClipboardManager.shared
     
-    // 全局事件监控
-    private var eventMonitor: Any?
+    // 全局鼠标点击监控
     private var clickMonitor: Any?
     
-    // CGEventTap for hotkey
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    // 全局快捷键监控 - 使用 NSEvent
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
     
-    // 定时器用于检查/重连 event tap
-    private var hotkeyTimer: Timer?
+    // 标记是否正在监控（防止重复）
+    private var isMonitoring = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPanel()
-        setupGlobalHotKey()
-        startHotkeyHealthCheck()
+        startGlobalHotKey()
     }
-
-    // MARK: - Hotkey Setup
     
-    private func setupGlobalHotKey() {
-        setupCGEventTap()
+    // MARK: - Global Hotkey Setup
+    
+    private func startGlobalHotKey() {
+        // 确保监控状态
+        if isMonitoring { return }
+        isMonitoring = true
+        
+        // 使用 NSEvent 全局监控（对菜单栏应用更可靠）
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKeyEvent(event)
+        }
         
         // 本地监控作为备用
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event)
             return event
         }
-    }
-
-    private func setupCGEventTap() {
-        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
-
-        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
-            guard let refcon = refcon else { return Unmanaged.passRetained(event) }
-            let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
-
-            // 处理 keyDown 事件
-            if type == .keyDown {
-                let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-                let flags = event.flags
-
-                if flags.contains(.maskControl) && keyCode == kVK_ANSI_V {
-                    DispatchQueue.main.async {
-                        appDelegate.togglePanel()
-                    }
-                    // 消费掉这个事件，不传递给其他应用
-                    return nil
-                }
-            }
-            
-            // 其他事件正常传递
-            return Unmanaged.passRetained(event)
-        }
-
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: eventMask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        )
-
-        if let tap = eventTap {
-            runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-            print("✅ CGEventTap 创建成功")
-        } else {
-            print("⚠️ CGEventTap 创建失败")
-            queryAccessibilityPermissions()
-        }
-    }
-    
-    // 健康检查：定期确保 event tap 处于启用状态
-    private func startHotkeyHealthCheck() {
-        hotkeyTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.checkAndRestoreEventTap()
-        }
-    }
-    
-    private func checkAndRestoreEventTap() {
-        guard let tap = eventTap else { return }
         
-        // 检查 tap 是否启用
-        let isEnabled = CGEvent.tapIsEnabled(tap: tap)
-        
-        if !isEnabled {
-            print("⚠️ EventTap 被禁用，尝试重新启用...")
-            CGEvent.tapEnable(tap: tap, enable: true)
-            
-            // 如果重新启用失败，尝试重新创建
-            if !CGEvent.tapIsEnabled(tap: tap) {
-                print("⚠️ 重新启用失败，尝试重建 EventTap...")
-                cleanupEventTap()
-                setupCGEventTap()
-            }
-        }
+        print("✅ 全局快捷键监控已启动")
     }
     
-    private func cleanupEventTap() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
+    private func stopGlobalHotKey() {
+        if let monitor = globalKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalKeyMonitor = nil
         }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+        if let monitor = localKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyMonitor = nil
         }
-        eventTap = nil
-        runLoopSource = nil
+        isMonitoring = false
     }
-
-    private func queryAccessibilityPermissions() {
-        let trusted = AXIsProcessTrusted()
-        print("辅助功能权限状态: \(trusted)")
-
-        if !trusted {
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
+    
+    private func restartGlobalHotKey() {
+        stopGlobalHotKey()
+        // 延迟一点重启，让系统有时间清理
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.startGlobalHotKey()
         }
     }
 
     private func handleKeyEvent(_ event: NSEvent) {
-        let controlPressed = event.modifierFlags.contains(.control)
-        if controlPressed && event.keyCode == kVK_ANSI_V {
-            DispatchQueue.main.async {
-                self.togglePanel()
+        // 检查 Control + V
+        let isControlV = event.modifierFlags.contains(.control) && event.keyCode == kVK_ANSI_V
+        
+        if isControlV {
+            // 强制在主线程执行
+            DispatchQueue.main.async { [weak self] in
+                self?.togglePanel()
             }
+        }
+    }
+    
+    // MARK: - Accessibility Check
+    
+    private func checkAccessibility() {
+        let trusted = AXIsProcessTrusted()
+        if !trusted {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
         }
     }
 
@@ -156,6 +104,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanel.setContentSize(NSSize(width: screenFrame.width, height: 300))
         floatingPanel.setFrameOrigin(NSPoint(x: screenFrame.origin.x, y: screenFrame.origin.y - 300))
         floatingPanel.makeKeyAndOrderFront(nil)
+        
+        // 激活应用（关键！让app成为前台应用，这样快捷键监控才能正常工作）
         NSApp.activate(ignoringOtherApps: true)
 
         NSAnimationContext.runAnimationGroup { context in
@@ -168,7 +118,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func hidePanel() {
-        // 隐藏前先停止点击监控
         stopClickOutsideMonitor()
         
         NSAnimationContext.runAnimationGroup { context in
@@ -182,36 +131,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Click Outside Detection
     
     private func startClickOutsideMonitor() {
-        // 使用 NSEvent global monitor 检测鼠标点击
+        // 防止重复创建
+        stopClickOutsideMonitor()
+        
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self = self, self.floatingPanel.isVisible else { return }
             
-            // 获取点击位置（屏幕坐标）
-            let clickLocation = event.locationInWindow
+            // 获取鼠标在屏幕上的位置
+            let mouseLocation = NSEvent.mouseLocation
+            let panelFrame = self.floatingPanel.frame
             
-            // 将点击位置转换到屏幕坐标
-            guard let window = event.window else {
-                // 如果 event.window 为 nil，说明点击不在任何窗口内
-                // 这种情况可能是点击在桌面上或其他应用上
-                // 检查是否点击在面板外
-                if self.isClickOutsidePanel(event) {
+            // 如果鼠标不在面板内，则关闭面板
+            if !NSPointInRect(mouseLocation, panelFrame) {
+                DispatchQueue.main.async {
                     self.hidePanel()
-                }
-                return
-            }
-            
-            // 获取点击的窗口在屏幕上的 frame
-            if let windowFrame = window.convertToScreen(NSRect(origin: clickLocation, size: NSSize(width: 1, height: 1))) as NSRect? {
-                // 检查点击位置是否在面板范围内
-                let panelFrame = self.floatingPanel.frame
-                
-                // 如果点击不在面板内，则关闭面板
-                if !NSPointInRect(windowFrame.origin, panelFrame) {
-                    // 进一步验证：确保不是点击在面板本身
-                    let panelScreenFrame = self.floatingPanel.convertToScreen(NSRect(origin: .zero, size: panelFrame.size))
-                    if !NSPointInRect(windowFrame.origin, panelScreenFrame) {
-                        self.hidePanel()
-                    }
                 }
             }
         }
@@ -223,19 +156,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             clickMonitor = nil
         }
     }
-    
-    private func isClickOutsidePanel(_ event: NSEvent) -> Bool {
-        guard let screen = NSScreen.main else { return false }
-        
-        // 获取鼠标在屏幕上的位置
-        let mouseLocation = NSEvent.mouseLocation
-        
-        // 检查鼠标位置是否在面板范围内
-        let panelFrame = floatingPanel.frame
-        
-        // 如果鼠标不在面板内，则认为是点击外面
-        return !NSPointInRect(mouseLocation, panelFrame)
-    }
 
     @objc private func clearHistory() {
         clipboardManager.clearHistory()
@@ -243,18 +163,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         stopClickOutsideMonitor()
-        hotkeyTimer?.invalidate()
-        cleanupEventTap()
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        stopGlobalHotKey()
         NSApplication.shared.terminate(nil)
     }
 
     deinit {
-        hotkeyTimer?.invalidate()
-        cleanupEventTap()
         stopClickOutsideMonitor()
+        stopGlobalHotKey()
     }
 
     // MARK: - Status Item Setup
@@ -306,9 +221,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanel.isFloatingPanel = true
         floatingPanel.becomesKeyOnlyIfNeeded = true
         floatingPanel.hidesOnDeactivate = false
-        // 允许点击事件穿透（用于检测外部点击）
         floatingPanel.acceptsMouseMovedEvents = true
-        floatingPanel.ignoresMouseEvents = false
 
         floatingPanel.alphaValue = 0
     }
@@ -454,7 +367,7 @@ struct ClipboardContentView: View {
     }
 
     private var contentView: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        ScrollView(.horizontal, showsIndicators: true) {
             HStack(spacing: 14) {
                 ForEach(filteredItems, id: \.id) { item in
                     ClipboardCard(
@@ -470,6 +383,7 @@ struct ClipboardContentView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateView: some View {
