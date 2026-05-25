@@ -125,7 +125,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.title = "📋"
+            if let image = NSImage(systemSymbolName: "scissors", accessibilityDescription: nil) {
+                let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+                let rotatedImage = image.withSymbolConfiguration(config)?.rotated180()
+                let tintedImage = rotatedImage?.tinted(with: .white)
+                button.image = tintedImage
+                button.imagePosition = .imageOnly
+            } else {
+                button.title = "✂"
+            }
             button.action = #selector(togglePanel)
             button.target = self
         }
@@ -134,12 +142,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func createMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show (⌘⇧V)", action: #selector(showPanel), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "显示面板 (⌘⇧V)", action: #selector(showPanel), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "设置...", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "清空历史", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q"))
         return menu
+    }
+
+    @objc private func openSettings() {
+        let alert = NSAlert()
+        alert.messageText = "历史记录保留天数"
+        alert.informativeText = "选择保留天数："
+        alert.alertStyle = .informational
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
+        let options = [7, 30, 90, 180]
+        for days in options {
+            popup.addItem(withTitle: "\(days) 天")
+        }
+        popup.selectItem(withTitle: "\(ClipboardManager.shared.retentionDays) 天")
+
+        alert.accessoryView = popup
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            if let title = popup.selectedItem?.title,
+               let days = Int(title.replacingOccurrences(of: " 天", with: "")) {
+                ClipboardManager.shared.retentionDays = days
+            }
+        }
     }
 
     // MARK: - Panel Setup
@@ -265,7 +300,7 @@ struct ClipboardContentView: View {
                 Circle()
                     .fill(Color.accentColor.opacity(0.8))
                     .frame(width: 8, height: 8)
-                Text("Clipboard")
+                Text("历史剪切板")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
             }
@@ -275,7 +310,7 @@ struct ClipboardContentView: View {
             HStack(spacing: 4) {
                 Text("\(manager.items.count)")
                     .font(.system(size: 12, weight: .semibold))
-                Text("items")
+                Text("条记录")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
@@ -325,22 +360,44 @@ struct ClipboardCard: View {
     let onClick: () -> Void
     let onHover: (Bool) -> Void
 
+    private var curledCorner: some View {
+        ZStack {
+            CornerCurvedShape()
+                .fill(Color.black.opacity(0.15))
+                .frame(width: 20, height: 20)
+                .offset(x: 68, y: -62)
+
+            CornerCutShape()
+                .fill(Color.secondary.opacity(0.2))
+                .frame(width: 20, height: 20)
+                .offset(x: 68, y: -62)
+        }
+    }
+
     var body: some View {
         Button(action: onClick) {
-            VStack(alignment: .leading, spacing: 0) {
-                previewArea
-                    .frame(height: 100)
+            ZStack(alignment: .topTrailing) {
+                VStack(alignment: .leading, spacing: 0) {
+                    previewArea
+                        .frame(height: 100)
 
-                Divider()
-                    .background(Color.secondary.opacity(0.2))
+                    Divider()
+                        .background(Color.secondary.opacity(0.2))
 
-                footerArea
-                    .frame(height: 36)
+                    footerArea
+                        .frame(height: 36)
+                }
+                .frame(width: 160, height: 136)
+                .background(.regularMaterial)
+                .clipShape(CornerCutShape())
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.secondary.opacity(isHovered ? 0.3 : 0.1), lineWidth: 1)
+                )
+
+                curledCorner
             }
-            .frame(width: 160, height: 136)
-            .background(.regularMaterial)
-            .cornerRadius(10)
-            .shadow(color: .black.opacity(isHovered ? 0.15 : 0.08), radius: isHovered ? 10 : 5, x: 0, y: isHovered ? 4 : 2)
+            .shadow(color: .black.opacity(isHovered ? 0.2 : 0.1), radius: isHovered ? 8 : 4, x: 2, y: isHovered ? 4 : 2)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -463,8 +520,10 @@ class ClipboardManager: ObservableObject {
 
     private var lastChangeCount: Int
     private var timer: Timer?
-    private let maxItems = 30
+    private let maxRetentionDays = 7
+    private let maxItems = 200
     private let userDefaultsKey = "ClipboardHistory"
+    private let retentionDaysKey = "ClipboardRetentionDays"
     private var imageDirectory: URL
 
     private init() {
@@ -551,8 +610,35 @@ class ClipboardManager: ObservableObject {
     }
 
     private func trimItems() {
+        // 按条数限制
         if items.count > maxItems {
             items = Array(items.prefix(maxItems))
+        }
+        // 按天数清理
+        let retentionDays = UserDefaults.standard.integer(forKey: retentionDaysKey)
+        let actualDays = retentionDays > 0 ? retentionDays : maxRetentionDays
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -actualDays, to: Date()) ?? Date()
+        items = items.filter { $0.timestamp > cutoffDate }
+    }
+
+    private func cleanupOldImages() {
+        // 清理不再被引用的图片文件
+        let usedFilenames = Set(items.compactMap { $0.imagePath })
+        let imageFiles = (try? FileManager.default.contentsOfDirectory(at: imageDirectory, includingPropertiesForKeys: nil)) ?? []
+        for file in imageFiles where !usedFilenames.contains(file.lastPathComponent) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    var retentionDays: Int {
+        get {
+            let days = UserDefaults.standard.integer(forKey: retentionDaysKey)
+            return days > 0 ? days : maxRetentionDays
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: retentionDaysKey)
+            trimItems()
+            saveHistory()
         }
     }
 
@@ -608,6 +694,7 @@ struct ClipboardItem: Identifiable, Codable {
     let content: String
     var imagePath: String?
     var filePath: String?
+    let timestamp: Date
 
     init(type: ClipboardItemType, content: String, imagePath: String? = nil, filePath: String? = nil) {
         self.id = UUID()
@@ -615,6 +702,7 @@ struct ClipboardItem: Identifiable, Codable {
         self.content = content
         self.imagePath = imagePath
         self.filePath = filePath
+        self.timestamp = Date()
     }
 
     func loadImage() -> NSImage? {
@@ -635,5 +723,81 @@ extension NSImage {
             return nil
         }
         return png
+    }
+}
+
+// MARK: - Shape Definitions
+
+// 右上角裁剪形状（翻页卷角效果）
+struct CornerCutShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        let cornerSize: CGFloat = 20
+
+        path.move(to: CGPoint(x: cornerSize, y: 0))
+        path.addLine(to: CGPoint(x: 0, y: 0))
+        path.addLine(to: CGPoint(x: 0, y: rect.height))
+
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+        path.addLine(to: CGPoint(x: rect.width, y: cornerSize))
+
+        path.addLine(to: CGPoint(x: rect.width, y: 0))
+        path.addLine(to: CGPoint(x: rect.width - cornerSize, y: 0))
+
+        path.closeSubpath()
+
+        return path
+    }
+}
+
+// 卷角曲线形状（翻页卷起的弧度）
+struct CornerCurvedShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        let cornerSize: CGFloat = 20
+
+        path.move(to: CGPoint(x: rect.width, y: 0))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.width - cornerSize, y: cornerSize),
+            control: CGPoint(x: rect.width - 4, y: 4)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: rect.width, y: 0),
+            control: CGPoint(x: rect.width, y: 0)
+        )
+
+        return path
+    }
+}
+
+// MARK: - NSImage Extension
+
+extension NSImage {
+    func rotated180() -> NSImage {
+        let rotated = NSImage(size: self.size)
+        rotated.lockFocus()
+        let transform = NSAffineTransform()
+        transform.translateX(by: self.size.width, yBy: self.size.height)
+        transform.rotate(byDegrees: 180)
+        transform.concat()
+        self.draw(in: NSRect(origin: .zero, size: self.size),
+                  from: NSRect(origin: .zero, size: self.size),
+                  operation: .sourceOver,
+                  fraction: 1.0)
+        rotated.unlockFocus()
+        return rotated
+    }
+
+    func tinted(with color: NSColor) -> NSImage {
+        let image = self.copy() as! NSImage
+        image.lockFocus()
+        color.set()
+        let rect = NSRect(origin: .zero, size: image.size)
+        rect.fill(using: .sourceAtop)
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 }
