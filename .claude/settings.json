@@ -4,7 +4,9 @@
       "Bash(xcodegen generate *)",
       "Bash(xcodebuild -project ClipBoard.xcodeproj -scheme ClipBoard -configuration Debug build)",
       "Bash(xcodebuild -project ClipBoard.xcodeproj -scheme ClipBoard -configuration Debug build CODE_SIGN_IDENTITY=\"-\" CODE_SIGN_STYLE=Manual)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git checkout *)"
     ]
   }
 }

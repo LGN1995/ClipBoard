@@ -53,10 +53,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
 
-        floatingPanel.setContentSize(NSSize(width: screenFrame.width, height: 300))
-        floatingPanel.setFrameOrigin(NSPoint(x: screenFrame.origin.x, y: screenFrame.origin.y - 300))
-        floatingPanel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        let panelHeight: CGFloat = 220
+        let x = screenFrame.origin.x
+        let y = screenFrame.origin.y + 1  // 底部留 1pt 边距
+        let width = screenFrame.width
+        floatingPanel.setFrame(NSRect(x: x, y: y, width: width, height: panelHeight), display: true)
+        floatingPanel.orderFront(nil)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
@@ -66,7 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startClickOutsideMonitor()
     }
 
-    private func hidePanel() {
+    @objc private func hidePanel() {
         stopClickOutsideMonitor()
 
         NSAnimationContext.runAnimationGroup { context in
@@ -152,22 +154,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         floatingPanel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
-            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
 
-        floatingPanel.contentView = hostingView
-        floatingPanel.title = "ClipBoard"
+        let visualEffectView = NSVisualEffectView()
+        visualEffectView.material = .hudWindow
+        visualEffectView.blendingMode = .behindWindow
+        visualEffectView.state = .active
+        visualEffectView.wantsLayer = true
+        visualEffectView.layer?.cornerRadius = 12
+        visualEffectView.layer?.masksToBounds = true
+
+        hostingView.frame = visualEffectView.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        visualEffectView.addSubview(hostingView)
+
+        floatingPanel.contentView = visualEffectView
         floatingPanel.level = .floating
         floatingPanel.isMovableByWindowBackground = true
-        floatingPanel.titlebarAppearsTransparent = true
-        floatingPanel.titleVisibility = .hidden
         floatingPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         floatingPanel.isFloatingPanel = true
         floatingPanel.becomesKeyOnlyIfNeeded = true
         floatingPanel.hidesOnDeactivate = false
         floatingPanel.acceptsMouseMovedEvents = true
+        floatingPanel.backgroundColor = .clear
+        floatingPanel.isOpaque = false
+        floatingPanel.isMovableByWindowBackground = true
+        floatingPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        floatingPanel.isFloatingPanel = true
+        floatingPanel.becomesKeyOnlyIfNeeded = true
+        floatingPanel.hidesOnDeactivate = false
+        floatingPanel.acceptsMouseMovedEvents = true
+        floatingPanel.backgroundColor = .clear
+        floatingPanel.isOpaque = false
+
+        // Hide traffic lights completely
+        floatingPanel.standardWindowButton(.closeButton)?.isHidden = true
+        floatingPanel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        floatingPanel.standardWindowButton(.zoomButton)?.isHidden = true
 
         floatingPanel.alphaValue = 0
     }
@@ -218,15 +244,7 @@ struct ClipboardContentView: View {
     let onSelect: (ClipboardItem) -> Void
 
     @ObservedObject private var manager = ClipboardManager.shared
-    @State private var searchText = ""
     @State private var hoveredItemId: UUID?
-
-    var filteredItems: [ClipboardItem] {
-        if searchText.isEmpty {
-            return manager.items
-        }
-        return manager.items.filter { $0.content.localizedCaseInsensitiveContains(searchText) }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -234,88 +252,43 @@ struct ClipboardContentView: View {
 
             if manager.items.isEmpty {
                 emptyStateView
-            } else if filteredItems.isEmpty {
-                noResultsView
             } else {
                 contentView
             }
         }
-        .frame(height: 300)
-        .background(ClipBoardColors.background)
+        .frame(height: 220)
     }
 
     private var headerView: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "doc.on.clipboard.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(ClipBoardColors.primary)
-                Text("ClipBoard")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(ClipBoardColors.text)
-            }
-
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundColor(ClipBoardColors.textSecondary)
-
-                TextField("Search...", text: $searchText)
-                    .font(.system(size: 13))
-                    .frame(width: 160)
-
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(ClipBoardColors.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+                Circle()
+                    .fill(Color.accentColor.opacity(0.8))
+                    .frame(width: 8, height: 8)
+                Text("Clipboard")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.primary)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(ClipBoardColors.cardBackground)
-            .cornerRadius(8)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(ClipBoardColors.border, lineWidth: 1)
-            )
 
             Spacer()
 
             HStack(spacing: 4) {
                 Text("\(manager.items.count)")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(ClipBoardColors.primary)
                 Text("items")
                     .font(.system(size: 12))
-                    .foregroundColor(ClipBoardColors.textSecondary)
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(ClipBoardColors.primary.opacity(0.1))
-            .cornerRadius(12)
-
-            Button(action: { NSApp.keyWindow?.orderOut(nil) }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(ClipBoardColors.textSecondary)
-                    .frame(width: 24, height: 24)
-                    .background(ClipBoardColors.cardBackground)
-                    .cornerRadius(6)
-            }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
+        .padding(.top, 14)
         .padding(.bottom, 10)
     }
 
     private var contentView: some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            HStack(spacing: 14) {
-                ForEach(filteredItems, id: \.id) { item in
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(manager.items, id: \.id) { item in
                     ClipboardCard(
                         item: item,
                         isHovered: hoveredItemId == item.id,
@@ -327,53 +300,22 @@ struct ClipboardContentView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            Spacer()
+        VStack(spacing: 10) {
+            Image(systemName: "doc.on.clipboard")
+                .font(.system(size: 32))
+                .foregroundColor(.secondary)
 
-            ZStack {
-                Circle()
-                    .fill(ClipBoardColors.primary.opacity(0.1))
-                    .frame(width: 64, height: 64)
-
-                Image(systemName: "clipboard")
-                    .font(.system(size: 28))
-                    .foregroundColor(ClipBoardColors.primary)
-            }
-
-            VStack(spacing: 4) {
-                Text("No Clipboard History")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(ClipBoardColors.text)
-
-                Text("Copy something to get started")
-                    .font(.system(size: 12))
-                    .foregroundColor(ClipBoardColors.textSecondary)
-            }
-
-            Spacer()
-        }
-    }
-
-    private var noResultsView: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 28))
-                .foregroundColor(ClipBoardColors.textSecondary)
-
-            Text("No results for \"\(searchText)\"")
+            Text("No clipboard history")
                 .font(.system(size: 13))
-                .foregroundColor(ClipBoardColors.textSecondary)
-
-            Spacer()
+                .foregroundColor(.secondary)
         }
+        .frame(maxHeight: .infinity)
     }
 }
 
@@ -387,29 +329,24 @@ struct ClipboardCard: View {
         Button(action: onClick) {
             VStack(alignment: .leading, spacing: 0) {
                 previewArea
-                    .frame(height: 130)
+                    .frame(height: 100)
 
-                Rectangle()
-                    .fill(ClipBoardColors.border)
-                    .frame(height: 1)
+                Divider()
+                    .background(Color.secondary.opacity(0.2))
 
                 footerArea
-                    .frame(height: 50)
+                    .frame(height: 36)
             }
-            .frame(width: 200, height: 180)
-            .background(ClipBoardColors.cardBackground)
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(isHovered ? 0.12 : 0.06), radius: isHovered ? 8 : 4, x: 0, y: isHovered ? 4 : 2)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isHovered ? ClipBoardColors.primary.opacity(0.3) : Color.clear, lineWidth: 1)
-            )
+            .frame(width: 160, height: 136)
+            .background(.regularMaterial)
+            .cornerRadius(10)
+            .shadow(color: .black.opacity(isHovered ? 0.15 : 0.08), radius: isHovered ? 10 : 5, x: 0, y: isHovered ? 4 : 2)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             onHover(hovering)
         }
-        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .scaleEffect(isHovered ? 1.03 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isHovered)
     }
 
@@ -418,87 +355,78 @@ struct ClipboardCard: View {
         switch item.type {
         case .text:
             Text(item.content)
-                .font(.system(size: 12))
-                .foregroundColor(ClipBoardColors.text)
-                .lineLimit(6)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.primary)
+                .lineLimit(5)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(12)
+                .padding(10)
 
         case .image:
             ZStack {
                 Rectangle()
-                    .fill(Color.gray.opacity(0.05))
+                    .fill(Color.secondary.opacity(0.05))
 
                 if let image = item.loadImage() {
                     Image(nsImage: image)
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .padding(8)
+                        .aspectRatio(contentMode: .fill)
+                        .clipped()
+                        .padding(6)
                 } else {
-                    VStack(spacing: 6) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 24))
-                            .foregroundColor(ClipBoardColors.textSecondary)
-                        Text("Image")
-                            .font(.system(size: 11))
-                            .foregroundColor(ClipBoardColors.textSecondary)
-                    }
+                    Image(systemName: "photo")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary)
                 }
             }
 
         case .file:
             ZStack {
                 Rectangle()
-                    .fill(Color.gray.opacity(0.05))
+                    .fill(Color.secondary.opacity(0.05))
 
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     Image(systemName: "doc.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(ClipBoardColors.secondary)
+                        .font(.system(size: 22))
+                        .foregroundColor(.accentColor)
 
                     Text(item.content)
-                        .font(.system(size: 11))
-                        .foregroundColor(ClipBoardColors.text)
+                        .font(.system(size: 10))
+                        .foregroundColor(.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 6)
                 }
             }
         }
     }
 
     private var footerArea: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             typeBadge
 
             Spacer()
 
-            HStack(spacing: 4) {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 10))
-                Text("Copy")
-                    .font(.system(size: 11))
+            if isHovered {
+                HStack(spacing: 3) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 9))
+                    Text("Copy")
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(.secondary)
             }
-            .foregroundColor(ClipBoardColors.textSecondary)
-            .opacity(isHovered ? 1 : 0)
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
     }
 
     private var typeBadge: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: typeIcon)
-                .font(.system(size: 10))
+                .font(.system(size: 8))
             Text(typeLabel)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 9, weight: .medium))
         }
         .foregroundColor(typeColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(typeColor.opacity(0.1))
-        .cornerRadius(6)
     }
 
     private var typeIcon: String {
@@ -519,9 +447,9 @@ struct ClipboardCard: View {
 
     private var typeColor: Color {
         switch item.type {
-        case .text: return ClipBoardColors.primary
-        case .image: return Color.purple
-        case .file: return ClipBoardColors.secondary
+        case .text: return .blue
+        case .image: return .purple
+        case .file: return .accentColor
         }
     }
 }
