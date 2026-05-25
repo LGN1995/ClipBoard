@@ -15,7 +15,12 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "13.0"
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
-    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_HARDENED_RUNTIME: NO
+
+packages:
+  HotKey:
+    url: https://github.com/soffes/HotKey
+    from: "0.2.1"
 
 targets:
   ClipBoard:
@@ -26,9 +31,12 @@ targets:
         type: group
       - path: Resources
         type: group
+    dependencies:
+      - package: HotKey
     settings:
       base:
         INFOPLIST_FILE: Resources/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.clipboard.app
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         COMBINE_HIDPI_IMAGES: YES
+        CODE_SIGN_ENTITLEMENTS: App/ClipBoard.entitlements

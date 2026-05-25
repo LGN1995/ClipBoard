@@ -1,90 +1,42 @@
 import AppKit
 import SwiftUI
 import Carbon.HIToolbox
-import CoreGraphics
+import HotKey
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var floatingPanel: NSPanel!
     private var clipboardManager = ClipboardManager.shared
-    
+
     // 全局鼠标点击监控
     private var clickMonitor: Any?
-    
-    // 全局快捷键监控 - 使用 NSEvent
-    private var globalKeyMonitor: Any?
-    private var localKeyMonitor: Any?
-    
-    // 标记是否正在监控（防止重复）
-    private var isMonitoring = false
+
+    // HotKey for global shortcut
+    private var hotKey: HotKey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPanel()
-        startGlobalHotKey()
+        setupKeyboardMonitoring()
     }
-    
-    // MARK: - Global Hotkey Setup
-    
-    private func startGlobalHotKey() {
-        // 确保监控状态
-        if isMonitoring { return }
-        isMonitoring = true
-        
-        // 使用 NSEvent 全局监控（对菜单栏应用更可靠）
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event)
-        }
-        
-        // 本地监控作为备用
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyEvent(event)
-            return event
-        }
-        
-        print("✅ 全局快捷键监控已启动")
-    }
-    
-    private func stopGlobalHotKey() {
-        if let monitor = globalKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalKeyMonitor = nil
-        }
-        if let monitor = localKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            localKeyMonitor = nil
-        }
-        isMonitoring = false
-    }
-    
-    private func restartGlobalHotKey() {
-        stopGlobalHotKey()
-        // 延迟一点重启，让系统有时间清理
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.startGlobalHotKey()
+
+    // MARK: - Keyboard Monitoring
+
+    private func setupKeyboardMonitoring() {
+        hotKey = HotKey(key: .v, modifiers: [.command, .shift])
+        hotKey?.keyDownHandler = { [weak self] in
+            self?.togglePanel()
         }
     }
 
-    private func handleKeyEvent(_ event: NSEvent) {
-        // 检查 Control + V
-        let isControlV = event.modifierFlags.contains(.control) && event.keyCode == kVK_ANSI_V
-        
-        if isControlV {
-            // 强制在主线程执行
-            DispatchQueue.main.async { [weak self] in
-                self?.togglePanel()
-            }
-        }
-    }
+    private func checkAndRestoreTap() {}
+
+    private func recreateEventTap() {}
+
+    private func setupCGEventTap() {}
     
-    // MARK: - Accessibility Check
-    
-    private func checkAccessibility() {
-        let trusted = AXIsProcessTrusted()
-        if !trusted {
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-        }
+    private func cleanupKeyboardMonitoring() {
+        hotKey = nil
     }
 
     // MARK: - Panel Show/Hide
@@ -104,22 +56,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanel.setContentSize(NSSize(width: screenFrame.width, height: 300))
         floatingPanel.setFrameOrigin(NSPoint(x: screenFrame.origin.x, y: screenFrame.origin.y - 300))
         floatingPanel.makeKeyAndOrderFront(nil)
-        
-        // 激活应用（关键！让app成为前台应用，这样快捷键监控才能正常工作）
         NSApp.activate(ignoringOtherApps: true)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             floatingPanel.animator().alphaValue = 1
         }
-        
-        // 显示时开启点击监控
+
         startClickOutsideMonitor()
     }
 
     private func hidePanel() {
         stopClickOutsideMonitor()
-        
+
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             floatingPanel.animator().alphaValue = 0
@@ -131,17 +80,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Click Outside Detection
     
     private func startClickOutsideMonitor() {
-        // 防止重复创建
         stopClickOutsideMonitor()
         
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self = self, self.floatingPanel.isVisible else { return }
             
-            // 获取鼠标在屏幕上的位置
             let mouseLocation = NSEvent.mouseLocation
             let panelFrame = self.floatingPanel.frame
             
-            // 如果鼠标不在面板内，则关闭面板
             if !NSPointInRect(mouseLocation, panelFrame) {
                 DispatchQueue.main.async {
                     self.hidePanel()
@@ -162,14 +108,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
+        cleanupKeyboardMonitoring()
         stopClickOutsideMonitor()
-        stopGlobalHotKey()
         NSApplication.shared.terminate(nil)
     }
 
     deinit {
+        cleanupKeyboardMonitoring()
         stopClickOutsideMonitor()
-        stopGlobalHotKey()
     }
 
     // MARK: - Status Item Setup
@@ -186,7 +132,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func createMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show (⌃V)", action: #selector(showPanel), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show (⌘⇧V)", action: #selector(showPanel), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -617,7 +563,6 @@ class ClipboardManager: ObservableObject {
 
         let pasteboard = NSPasteboard.general
 
-        // 优先检查文件类型
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             DispatchQueue.main.async {
                 self.addFile(fileURLs.first!)
@@ -625,7 +570,6 @@ class ClipboardManager: ObservableObject {
             return
         }
 
-        // 检查图片
         if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff),
            let image = NSImage(data: imageData),
            image.tiffRepresentation != nil {
@@ -635,7 +579,6 @@ class ClipboardManager: ObservableObject {
             return
         }
 
-        // 检查纯文本
         if let content = pasteboard.string(forType: .string), !content.isEmpty {
             DispatchQueue.main.async {
                 self.addText(content)

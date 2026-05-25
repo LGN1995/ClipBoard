@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		BB896F9875D848C180DF16FF /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01DEE3CA37EA623389D521E3 /* AppDelegate.swift */; };
 		D0B3388A6F809D1AA5C9B857 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A8B1B178B17ACFFC2569A9B /* main.swift */; };
+		D4066F1821D1B87F931B89AC /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = 7621AA632C087A25E048D76E /* HotKey */; };
 		FA69115554EB4AE8C87052E7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E2F58ECAD90D43C895F5B660 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -16,9 +17,21 @@
 		01DEE3CA37EA623389D521E3 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		1A37F6E0B142769A3F3A3849 /* ClipBoard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClipBoard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1A8B1B178B17ACFFC2569A9B /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		31BA20E9EAFD8641AD167871 /* ClipBoard.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClipBoard.entitlements; sourceTree = "<group>"; };
 		4664C98F2BF1FD2EFC1D1D45 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E2F58ECAD90D43C895F5B660 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CBBB225413491EDDAB9BA242 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D4066F1821D1B87F931B89AC /* HotKey in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		4A5601F218A9B3D2FD97FCE4 = {
@@ -34,6 +47,7 @@
 			isa = PBXGroup;
 			children = (
 				01DEE3CA37EA623389D521E3 /* AppDelegate.swift */,
+				31BA20E9EAFD8641AD167871 /* ClipBoard.entitlements */,
 				1A8B1B178B17ACFFC2569A9B /* main.swift */,
 			);
 			path = App;
@@ -65,6 +79,7 @@
 			buildPhases = (
 				3DCFE0972610CA5FBB81D583 /* Sources */,
 				6B984D5D339B8B926A71B296 /* Resources */,
+				CBBB225413491EDDAB9BA242 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -72,6 +87,7 @@
 			);
 			name = ClipBoard;
 			packageProductDependencies = (
+				7621AA632C087A25E048D76E /* HotKey */,
 			);
 			productName = ClipBoard;
 			productReference = 1A37F6E0B142769A3F3A3849 /* ClipBoard.app */;
@@ -100,6 +116,9 @@
 			);
 			mainGroup = 4A5601F218A9B3D2FD97FCE4;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				43FAF849FAEBAB734F013DEB /* XCRemoteSwiftPackageReference "HotKey" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B15E8C01A0F1A20E179D456F /* Products */;
 			projectDirPath = "";
@@ -172,7 +191,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -199,6 +218,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/ClipBoard.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
@@ -245,7 +265,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -279,6 +299,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/ClipBoard.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
@@ -309,6 +330,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		43FAF849FAEBAB734F013DEB /* XCRemoteSwiftPackageReference "HotKey" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/soffes/HotKey";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.2.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7621AA632C087A25E048D76E /* HotKey */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 43FAF849FAEBAB734F013DEB /* XCRemoteSwiftPackageReference "HotKey" */;
+			productName = HotKey;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 76E6F5310CE08BF7CAC2D07F /* Project object */;
 }
