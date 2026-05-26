@@ -29,14 +29,17 @@ targets:
     sources:
       - path: App
         type: group
-      - path: Resources
-        type: group
+      - path: Resources/Assets.xcassets
+        type: folder
+      - path: Resources/Info.plist
+        type: file
     dependencies:
       - package: HotKey
     settings:
       base:
-        INFOPLIST_FILE: Resources/Info.plist
+        INFOPLIST_FILE: App/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.clipboard.app
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         COMBINE_HIDPI_IMAGES: YES
         CODE_SIGN_ENTITLEMENTS: App/ClipBoard.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

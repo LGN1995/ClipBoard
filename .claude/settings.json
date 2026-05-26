@@ -6,7 +6,15 @@
       "Bash(xcodebuild -project ClipBoard.xcodeproj -scheme ClipBoard -configuration Debug build CODE_SIGN_IDENTITY=\"-\" CODE_SIGN_STYLE=Manual)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(hdiutil create *)",
+      "Bash(rm -rf /tmp/dmg_temp)",
+      "Bash(mkdir -p /tmp/dmg_temp)",
+      "Bash(cp -R /Users/lgn/Library/Developer/Xcode/DerivedData/ClipBoard-dqrnottkkvkbajfacttwhztyfcli/Build/Products/Release/历史剪切板.app /tmp/dmg_temp/)",
+      "Bash(ln -s /Applications /tmp/dmg_temp/Applications)",
+      "Bash(hdiutil attach *)",
+      "Read(//tmp/**)",
+      "Bash(hdiutil detach *)"
     ]
   }
 }
