@@ -32,7 +32,7 @@
 
 ## 📸 截图预览
 
-![Uploading image.png…]()
+![App Screenshot](https://github.com/LGN1995/ClipBoard/raw/main/Resources/screenshot.jpg)
 
 
 ---
