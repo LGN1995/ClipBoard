@@ -14,7 +14,18 @@
       "Bash(ln -s /Applications /tmp/dmg_temp/Applications)",
       "Bash(hdiutil attach *)",
       "Read(//tmp/**)",
-      "Bash(hdiutil detach *)"
+      "Bash(hdiutil detach *)",
+      "Bash(sips -g pixelHeight -g pixelWidth /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png)",
+      "Bash(sips -z 16 16 /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png --out icon_16x16.png)",
+      "Bash(sips -z 32 32 /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png --out icon_16x16@2x.png)",
+      "Bash(sips -z 32 32 /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png --out icon_32x32.png)",
+      "Bash(sips -z 64 64 /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png --out icon_32x32@2x.png)",
+      "Bash(sips -z 128 128 /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png --out icon_128x128.png)",
+      "Bash(sips -z 256 256 /Users/lgn/Developer/ClipBoard/Resources/Assets.xcassets/AppIcon.appiconset/icon.png --out icon_128x128@2x.png)",
+      "Bash(cat \"/Users/lgn/Developer/ClipBoard/Resources/AppIcon.icns\")",
+      "Bash(mv \"/tmp/AppIcon_new.icns\" \"/Users/lgn/Developer/ClipBoard/Resources/AppIcon.icns\")",
+      "Bash(iconutil -c icns /Users/lgn/Developer/ClipBoard/Resources/AppIcons.iconset -o /tmp/AppIcon.icns)",
+      "Bash(cp -p /tmp/AppIcon.icns /Users/lgn/Developer/ClipBoard/Resources/AppIcon.icns)"
     ]
   }
 }

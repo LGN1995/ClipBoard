@@ -30,8 +30,9 @@ targets:
       - path: App
         type: group
       - path: Resources/Assets.xcassets
-        type: folder
       - path: Resources/Info.plist
+        type: file
+      - path: Resources/AppIcon.icns
         type: file
     dependencies:
       - package: HotKey

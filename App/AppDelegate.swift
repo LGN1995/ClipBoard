@@ -153,28 +153,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         let alert = NSAlert()
-        alert.messageText = "历史记录保留天数"
-        alert.informativeText = "选择保留天数："
+        alert.messageText = "设置"
+        alert.informativeText = ""
         alert.alertStyle = .informational
 
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26))
-        let options = [7, 30, 90, 180]
-        for days in options {
-            popup.addItem(withTitle: "\(days) 天")
-        }
-        popup.selectItem(withTitle: "\(ClipboardManager.shared.retentionDays) 天")
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 100))
 
-        alert.accessoryView = popup
+        // 保留天数标签
+        let daysLabel = NSTextField(labelWithString: "历史记录保留天数：")
+        daysLabel.frame = NSRect(x: 0, y: 70, width: 130, height: 20)
+        contentView.addSubview(daysLabel)
+
+        // 保留天数选择
+        let daysPopup = NSPopUpButton(frame: NSRect(x: 130, y: 68, width: 130, height: 26))
+        let daysOptions = [7, 30, 90, 180]
+        for days in daysOptions {
+            daysPopup.addItem(withTitle: "\(days) 天")
+        }
+        daysPopup.selectItem(withTitle: "\(ClipboardManager.shared.retentionDays) 天")
+        contentView.addSubview(daysPopup)
+
+        // 开机自启标签
+        let launchLabel = NSTextField(labelWithString: "开机自动启动：")
+        launchLabel.frame = NSRect(x: 0, y: 35, width: 130, height: 20)
+        contentView.addSubview(launchLabel)
+
+        // 开机自启开关
+        let launchSwitch = NSSwitch(frame: NSRect(x: 130, y: 35, width: 50, height: 20))
+        launchSwitch.state = LaunchManager.shared.isEnabled ? .on : .off
+        launchSwitch.target = self
+        launchSwitch.action = #selector(launchSwitchChanged(_:))
+        contentView.addSubview(launchSwitch)
+
+        alert.accessoryView = contentView
         alert.addButton(withTitle: "确定")
         alert.addButton(withTitle: "取消")
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            if let title = popup.selectedItem?.title,
+            if let title = daysPopup.selectedItem?.title,
                let days = Int(title.replacingOccurrences(of: " 天", with: "")) {
                 ClipboardManager.shared.retentionDays = days
             }
         }
+    }
+
+    @objc private func launchSwitchChanged(_ sender: NSSwitch) {
+        LaunchManager.shared.isEnabled = sender.state == .on
     }
 
     // MARK: - Panel Setup
@@ -799,5 +824,53 @@ extension NSImage {
         image.unlockFocus()
         image.isTemplate = false
         return image
+    }
+}
+
+// MARK: - Launch Manager
+
+class LaunchManager {
+    static let shared = LaunchManager()
+
+    private let launchAgentKey = "LaunchAtLogin"
+    private let bundleIdentifier = "com.clipboard.app"
+
+    var isEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: launchAgentKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: launchAgentKey)
+            if newValue {
+                enableLaunchAtLogin()
+            } else {
+                disableLaunchAtLogin()
+            }
+        }
+    }
+
+    private func enableLaunchAtLogin() {
+        guard let appPath = Bundle.main.executablePath else { return }
+        let plistContent: [String: Any] = [
+            "Label": bundleIdentifier,
+            "ProgramArguments": [appPath],
+            "RunAtLoad": true,
+            "KeepAlive": false
+        ]
+
+        let launchAgentsDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
+        try? FileManager.default.createDirectory(at: launchAgentsDir, withIntermediateDirectories: true)
+
+        let plistPath = launchAgentsDir.appendingPathComponent("\(bundleIdentifier).plist")
+        do {
+            let data = try PropertyListSerialization.data(fromPropertyList: plistContent, format: .xml, options: 0)
+            try data.write(to: plistPath)
+        } catch {
+            // 忽略错误
+        }
+    }
+
+    private func disableLaunchAtLogin() {
+        let launchAgentsDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
+        let plistPath = launchAgentsDir.appendingPathComponent("\(bundleIdentifier).plist")
+        try? FileManager.default.removeItem(at: plistPath)
     }
 }
